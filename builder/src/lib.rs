@@ -22,17 +22,23 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let builder_fn_body = gen_builder_fn_body(&input.data);
 
-    let expanded = quote! {
-        #vis struct #builder_ty {
-            #builder_fields
-        }
+    let builder_impl = gen_builder_impl(&input.data);
 
+    let expanded = quote! {
         impl #name {
             #vis fn builder() -> #builder_ty {
                 #builder_ty {
                     #builder_fn_body
                 }
             }
+        }
+
+        #vis struct #builder_ty {
+            #builder_fields
+        }
+
+        impl #builder_ty {
+            #builder_impl
         }
     };
 
@@ -69,6 +75,30 @@ fn gen_builder_fn_body(data: &Data) -> TokenStream {
                     let name = &f.ident;
                     quote_spanned! {f.span()=>
                         #name: None,
+                    }
+                });
+                quote! {
+                    #(#recurse)*
+                }
+            }
+            Fields::Unnamed(_) | Fields::Unit => unimplemented!(),
+        },
+        Data::Enum(_) | Data::Union(_) => unimplemented!(),
+    }
+}
+
+fn gen_builder_impl(data: &Data) -> TokenStream {
+    match *data {
+        Data::Struct(ref data) => match data.fields {
+            Fields::Named(ref fields) => {
+                let recurse = fields.named.iter().map(|f| {
+                    let name = &f.ident;
+                    let ty = &f.ty;
+                    quote_spanned! {f.span()=>
+                        fn #name(&mut self, #name: #ty) -> &mut Self {
+                            self.#name = Some(#name);
+                            self
+                        }
                     }
                 });
                 quote! {
