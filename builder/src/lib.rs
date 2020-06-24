@@ -24,6 +24,8 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let builder_impl = gen_builder_impl(&input.data);
 
+    let build_fn_body = gen_build_fn_body(&input.data, &name);
+
     let expanded = quote! {
         impl #name {
             #vis fn builder() -> #builder_ty {
@@ -39,6 +41,10 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         impl #builder_ty {
             #builder_impl
+
+            #vis fn build(self) -> Result<#name, Box<dyn std::error::Error>> {
+                #build_fn_body
+            }
         }
     };
 
@@ -103,6 +109,38 @@ fn gen_builder_impl(data: &Data) -> TokenStream {
                 });
                 quote! {
                     #(#recurse)*
+                }
+            }
+            Fields::Unnamed(_) | Fields::Unit => unimplemented!(),
+        },
+        Data::Enum(_) | Data::Union(_) => unimplemented!(),
+    }
+}
+
+fn gen_build_fn_body(data: &Data, name: &Ident) -> TokenStream {
+    match *data {
+        Data::Struct(ref data) => match data.fields {
+            Fields::Named(ref fields) => {
+                let check = fields.named.iter().map(|f| {
+                    let name = &f.ident;
+                    quote_spanned! {f.span()=>
+                        if self.#name.is_none() {
+                            return Err("The fields are not completely set yet, failed to build".into());
+                        }
+                    }
+                });
+                let field = fields.named.iter().map(|f| {
+                    let name = &f.ident;
+                    quote_spanned! {f.span()=>
+                        #name: self.#name.unwrap(),
+                    }
+                });
+                quote! {
+                    #(#check)*
+
+                    Ok(#name {
+                        #(#field)*
+                    })
                 }
             }
             Fields::Unnamed(_) | Fields::Unit => unimplemented!(),
