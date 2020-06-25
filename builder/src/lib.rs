@@ -15,23 +15,89 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     // Used in the quasi-quotation below as `#name`.
     let name = input.ident;
     let vis = input.vis;
+    let fields = if let Data::Struct(syn::DataStruct {
+        fields: Fields::Named(ref fields),
+        ..
+    }) = input.data
+    {
+        fields
+    } else {
+        unimplemented!()
+    };
 
     let builder_ty = Ident::new(&format!("{}Builder", name), Span::call_site());
 
-    let builder_fields = gen_builder_fields(&input.data);
+    let builder_fields = {
+        let recurse = fields.named.iter().map(|f| {
+            let name = &f.ident;
+            let ty = &f.ty;
+            quote_spanned! {f.span()=>
+                #name: Option<#ty>,
+            }
+        });
+        quote! {
+            #(#recurse)*
+        }
+    };
 
-    let builder_fn_body = gen_builder_fn_body(&input.data);
+    let builder_init = {
+        let recurse = fields.named.iter().map(|f| {
+            let name = &f.ident;
+            quote_spanned! {f.span()=>
+                #name: None,
+            }
+        });
+        quote! {
+            #builder_ty {
+                #(#recurse)*
+            }
+        }
+    };
 
-    let builder_impl = gen_builder_impl(&input.data);
+    let builder_impl = {
+        let recurse = fields.named.iter().map(|f| {
+            let name = &f.ident;
+            let ty = &f.ty;
+            quote_spanned! {f.span()=>
+                fn #name(&mut self, #name: #ty) -> &mut Self {
+                    self.#name = Some(#name);
+                    self
+                }
+            }
+        });
+        quote! {
+            #(#recurse)*
+        }
+    };
 
-    let build_fn_body = gen_build_fn_body(&input.data, &name);
+    let build_fn_body = {
+        let check = fields.named.iter().map(|f| {
+            let name = &f.ident;
+            quote_spanned! {f.span()=>
+                if self.#name.is_none() {
+                    return Err("The fields are not completely set yet, building failed".into());
+                }
+            }
+        });
+        let field = fields.named.iter().map(|f| {
+            let name = &f.ident;
+            quote_spanned! {f.span()=>
+                #name: self.#name.unwrap(),
+            }
+        });
+        quote! {
+            #(#check)*
+
+            Ok(#name {
+                #(#field)*
+            })
+        }
+    };
 
     let expanded = quote! {
         impl #name {
             #vis fn builder() -> #builder_ty {
-                #builder_ty {
-                    #builder_fn_body
-                }
+                #builder_init
             }
         }
 
@@ -50,101 +116,4 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     // Hand the output tokens back to the compiler.
     proc_macro::TokenStream::from(expanded)
-}
-
-fn gen_builder_fields(data: &Data) -> TokenStream {
-    match *data {
-        Data::Struct(ref data) => match data.fields {
-            Fields::Named(ref fields) => {
-                let recurse = fields.named.iter().map(|f| {
-                    let name = &f.ident;
-                    let ty = &f.ty;
-                    quote_spanned! {f.span()=>
-                        #name: Option<#ty>,
-                    }
-                });
-                quote! {
-                    #(#recurse)*
-                }
-            }
-            Fields::Unnamed(_) | Fields::Unit => unimplemented!(),
-        },
-        Data::Enum(_) | Data::Union(_) => unimplemented!(),
-    }
-}
-
-fn gen_builder_fn_body(data: &Data) -> TokenStream {
-    match *data {
-        Data::Struct(ref data) => match data.fields {
-            Fields::Named(ref fields) => {
-                let recurse = fields.named.iter().map(|f| {
-                    let name = &f.ident;
-                    quote_spanned! {f.span()=>
-                        #name: None,
-                    }
-                });
-                quote! {
-                    #(#recurse)*
-                }
-            }
-            Fields::Unnamed(_) | Fields::Unit => unimplemented!(),
-        },
-        Data::Enum(_) | Data::Union(_) => unimplemented!(),
-    }
-}
-
-fn gen_builder_impl(data: &Data) -> TokenStream {
-    match *data {
-        Data::Struct(ref data) => match data.fields {
-            Fields::Named(ref fields) => {
-                let recurse = fields.named.iter().map(|f| {
-                    let name = &f.ident;
-                    let ty = &f.ty;
-                    quote_spanned! {f.span()=>
-                        fn #name(&mut self, #name: #ty) -> &mut Self {
-                            self.#name = Some(#name);
-                            self
-                        }
-                    }
-                });
-                quote! {
-                    #(#recurse)*
-                }
-            }
-            Fields::Unnamed(_) | Fields::Unit => unimplemented!(),
-        },
-        Data::Enum(_) | Data::Union(_) => unimplemented!(),
-    }
-}
-
-fn gen_build_fn_body(data: &Data, name: &Ident) -> TokenStream {
-    match *data {
-        Data::Struct(ref data) => match data.fields {
-            Fields::Named(ref fields) => {
-                let check = fields.named.iter().map(|f| {
-                    let name = &f.ident;
-                    quote_spanned! {f.span()=>
-                        if self.#name.is_none() {
-                            return Err("The fields are not completely set yet, failed to build".into());
-                        }
-                    }
-                });
-                let field = fields.named.iter().map(|f| {
-                    let name = &f.ident;
-                    quote_spanned! {f.span()=>
-                        #name: self.#name.unwrap(),
-                    }
-                });
-                quote! {
-                    #(#check)*
-
-                    Ok(#name {
-                        #(#field)*
-                    })
-                }
-            }
-            Fields::Unnamed(_) | Fields::Unit => unimplemented!(),
-        },
-        Data::Enum(_) | Data::Union(_) => unimplemented!(),
-    }
 }
