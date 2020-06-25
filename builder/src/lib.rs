@@ -1,11 +1,9 @@
 extern crate proc_macro;
 
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, Span};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{
-    parse_macro_input, parse_quote, Data, DeriveInput, Fields, GenericParam, Generics, Index,
-};
+use syn::{parse_macro_input, Data, DeriveInput, Fields};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -54,6 +52,30 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }
     };
 
+    let build_fn_body = {
+        let check = fields.named.iter().map(|f| {
+            let name = &f.ident;
+            quote_spanned! {f.span()=>
+                if self.#name.is_none() {
+                    return Err("The fields are not completely set yet, building failed".into());
+                }
+            }
+        });
+        let field = fields.named.iter().map(|f| {
+            let name = &f.ident;
+            quote_spanned! {f.span()=>
+                #name: std::mem::replace(&mut self.#name, None).unwrap(),
+            }
+        });
+        quote! {
+            #(#check)*
+
+            Ok(#name {
+                #(#field)*
+            })
+        }
+    };
+
     let builder_impl = {
         let recurse = fields.named.iter().map(|f| {
             let name = &f.ident;
@@ -67,30 +89,10 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         });
         quote! {
             #(#recurse)*
-        }
-    };
 
-    let build_fn_body = {
-        let check = fields.named.iter().map(|f| {
-            let name = &f.ident;
-            quote_spanned! {f.span()=>
-                if self.#name.is_none() {
-                    return Err("The fields are not completely set yet, building failed".into());
-                }
+            #vis fn build(&mut self) -> Result<#name, Box<dyn std::error::Error>> {
+                #build_fn_body
             }
-        });
-        let field = fields.named.iter().map(|f| {
-            let name = &f.ident;
-            quote_spanned! {f.span()=>
-                #name: self.#name.unwrap(),
-            }
-        });
-        quote! {
-            #(#check)*
-
-            Ok(#name {
-                #(#field)*
-            })
         }
     };
 
@@ -107,12 +109,10 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         impl #builder_ty {
             #builder_impl
-
-            #vis fn build(self) -> Result<#name, Box<dyn std::error::Error>> {
-                #build_fn_body
-            }
         }
     };
+
+    // eprintln!("{:#?}", expanded);
 
     // Hand the output tokens back to the compiler.
     proc_macro::TokenStream::from(expanded)
