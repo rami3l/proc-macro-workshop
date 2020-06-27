@@ -1,7 +1,7 @@
 extern crate proc_macro;
 
 use proc_macro2::{Ident, Span};
-use quote::{quote, quote_spanned, ToTokens};
+use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 
@@ -23,15 +23,6 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         unimplemented!()
     };
 
-    let field_ty = Ident::new(&format!("{}Field", name), Span::call_site());
-
-    let field_ty_impl = quote! {
-        #vis enum #field_ty<T> {
-            Optional(T),
-            Required(T),
-        }
-    };
-
     let builder_ty = Ident::new(&format!("{}Builder", name), Span::call_site());
 
     let builder_fields = {
@@ -39,7 +30,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             let name = &f.ident;
             let ty = &inner_for_option(&f.ty).unwrap_or_else(|| f.ty.clone());
             quote_spanned! {f.span()=>
-                #name: #field_ty<Option<#ty>>,
+                #name: Option<#ty>,
             }
         });
         quote! {
@@ -50,19 +41,8 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let builder_init = {
         let recurse = fields.named.iter().map(|f| {
             let name = &f.ident;
-            let ty = &f.ty;
-            let is_optional = {
-                let ty_str = ty.to_token_stream().to_string();
-                ty_str.starts_with("Option")
-            };
-            let field = if is_optional {
-                quote!(#field_ty::Optional(None))
-            } else {
-                quote!(#field_ty::Required(None))
-            };
-
             quote_spanned! {f.span()=>
-                #name: #field,
+                #name: None,
             }
         });
         quote! {
@@ -73,29 +53,27 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
 
     let build_fn_body = {
-        let check = fields.named.iter().map(|f| {
-            let name = &f.ident;
-            quote_spanned! {f.span()=>
-                if let #field_ty::Required(None) = self.#name {
-                    return Err("The fields are not completely set yet, building failed".into());
+        let check = fields
+            .named
+            .iter()
+            .filter(|f| inner_for_option(&f.ty).is_none())
+            .map(|f| {
+                let name = &f.ident;
+                quote_spanned! {f.span()=>
+                    if let None = self.#name {
+                        return Err("The fields are not completely set yet, building failed".into());
+                    }
                 }
-            }
-        });
+            });
         let field = fields.named.iter().map(|f| {
             let name = &f.ident;
             if let Some(_) = inner_for_option(&f.ty) {
                 quote_spanned! {f.span()=>
-                    #name: match self.#name {
-                        #field_ty::Optional(ref mut mx) => std::mem::replace(mx, None),
-                        _ => unimplemented!(),
-                    },
+                    #name: std::mem::replace(&mut self.#name, None),
                 }
             } else {
                 quote_spanned! {f.span()=>
-                    #name: match self.#name {
-                        #field_ty::Required(ref mut mx) => std::mem::replace(mx, None).unwrap(),
-                        _ => unimplemented!(),
-                    },
+                    #name: std::mem::replace(&mut self.#name, None).unwrap(),
                 }
             }
         });
@@ -114,11 +92,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             let ty = &inner_for_option(&f.ty).unwrap_or_else(|| f.ty.clone());
             quote_spanned! {f.span()=>
                 fn #name(&mut self, #name: #ty) -> &mut Self {
-                    let field = match self.#name {
-                        #field_ty::Optional(_) => #field_ty::Optional(Some(#name)),
-                        #field_ty::Required(_) => #field_ty::Required(Some(#name)),
-                    };
-                    self.#name = field;
+                    self.#name = Some(#name);
                     self
                 }
             }
@@ -133,8 +107,6 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
 
     let expanded = quote! {
-        #field_ty_impl
-
         impl #name {
             #vis fn builder() -> #builder_ty {
                 #builder_init
