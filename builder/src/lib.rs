@@ -28,7 +28,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let builder_ty = Ident::new(&format!("{}Builder", ident), Span::call_site());
 
     let builder_fields = {
-        let recurse = fields.named.iter().map(|f| {
+        let builder_field = fields.named.iter().map(|f| {
             let name = &f.ident;
             let ty = &inner_for_option(&f.ty).unwrap_or_else(|| f.ty.clone());
             quote_spanned! {f.span()=>
@@ -36,7 +36,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         });
         quote! {
-            #(#recurse)*
+            #(#builder_field)*
         }
     };
 
@@ -151,7 +151,6 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 quote! {}
             } else {
                 let ty = &inner_for_option(&f.ty).unwrap_or_else(|| f.ty.clone());
-
                 quote_spanned! {f.span()=>
                     fn #name(&mut self, #name: #ty) -> &mut Self {
                         self.#name = Some(#name);
