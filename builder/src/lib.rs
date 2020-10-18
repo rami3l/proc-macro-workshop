@@ -47,7 +47,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             .iter()
             .filter(|&f| !f.attrs.is_empty())
             .for_each(|f| {
-                let setter_attr = f.attrs.iter().next().unwrap();
+                let setter_attr = f.attrs.get(0).unwrap();
                 let meta = setter_attr.parse_meta().unwrap();
                 if let syn::Meta::List(syn::MetaList { nested, .. }) = meta {
                     if let Some(syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
@@ -100,7 +100,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 });
             let field = fields.named.iter().map(|f| {
                 let name = &f.ident;
-                if let Some(_) = inner_for_option(&f.ty) {
+                if inner_for_option(&f.ty).is_some() {
                     quote_spanned! {f.span()=>
                         #name: std::mem::replace(&mut self.#name, None),
                     }
